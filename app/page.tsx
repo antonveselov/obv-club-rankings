@@ -6,7 +6,7 @@ import Fuse from 'fuse.js';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
-import { X, TrendingUp, Calendar, Trophy, Medal, Info, MousePointer2 } from 'lucide-react';
+import { X, TrendingUp, Calendar, Trophy, Medal, Info, MousePointer2, Search, User, Shield } from 'lucide-react';
 
 interface Club {
   id: string;
@@ -26,6 +26,17 @@ interface Player {
   name: string;
   club: string;
   points: string;
+}
+
+interface SearchResult {
+  id: string;
+  name: string;
+  club: string;
+  rankings: {
+    singles?: number;
+    doubles?: number;
+    mixed?: number;
+  };
 }
 
 interface CategoryResult {
@@ -86,6 +97,11 @@ export default function Home() {
   const [playerHistory, setPlayerHistory] = useState<PlayerHistory | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  // Player Search State
+  const [playerSearchQuery, setPlayerSearchQuery] = useState('');
+  const [playerSearchResults, setPlayerSearchResults] = useState<SearchResult[]>([]);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+
   useEffect(() => {
     setMounted(true);
     fetch('/api/metadata')
@@ -109,6 +125,7 @@ export default function Home() {
     setPlayers([]);
     setTop5Results([]);
     setEligibilityResults([]);
+    setPlayerSearchResults([]);
     setError(null);
 
     try {
@@ -136,6 +153,7 @@ export default function Home() {
     setTop5Results([]);
     setPlayers([]);
     setEligibilityResults([]);
+    setPlayerSearchResults([]);
     setError(null);
 
     try {
@@ -163,6 +181,29 @@ export default function Home() {
       setError('Failed to load Top 5: ' + err.message);
     } finally {
       setLoadingTop5(false);
+    }
+  };
+
+  const handlePlayerSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (playerSearchQuery.length < 3) return;
+    
+    setLoadingSearch(true);
+    setPlayerSearchResults([]);
+    setPlayers([]);
+    setTop5Results([]);
+    setEligibilityResults([]);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/search-player?q=${encodeURIComponent(playerSearchQuery)}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setPlayerSearchResults(data);
+    } catch (err: any) {
+      setError('Player Search Error: ' + err.message);
+    } finally {
+      setLoadingSearch(false);
     }
   };
 
@@ -205,6 +246,7 @@ export default function Home() {
     setCheckingEligibility(true);
     setPlayers([]);
     setTop5Results([]);
+    setPlayerSearchResults([]);
     setError(null);
 
     try {
@@ -250,12 +292,12 @@ export default function Home() {
     }
   };
 
-  const openPlayerHistory = async (player: Player) => {
+  const openPlayerHistory = async (player: { id: string; name: string }) => {
     if (!metadata || !player.id) {
       console.warn("Cannot fetch history: Missing player ID");
       return;
     }
-    setSelectedPlayer(player);
+    setSelectedPlayer({ id: player.id, name: player.name, rank: '', club: '', points: '' });
     setPlayerHistory(null);
     setLoadingHistory(true);
     
@@ -263,7 +305,7 @@ export default function Home() {
       const params = new URLSearchParams({
         actualId: metadata.actualId,
         playerId: player.id,
-        clubId: selectedClubId
+        clubId: selectedClubId || ''
       });
       const res = await fetch(`/api/history?${params.toString()}`);
       const data = await res.json();
@@ -281,7 +323,7 @@ export default function Home() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Lade Vereinsdaten...</p>
+          <p className="text-gray-600 font-bold uppercase tracking-widest text-xs">Initialisierung...</p>
         </div>
       </div>
     );
@@ -308,21 +350,96 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8 font-sans">
       <div className="max-w-4xl mx-auto">
-        <div className="bg-white shadow-sm rounded-3xl p-6 sm:p-8 mb-8 border border-gray-200">
-          <h1 className="text-3xl font-black text-gray-900 mb-8 flex items-center gap-4 tracking-tighter">
-            <div className="bg-yellow-400 p-2 rounded-xl shadow-inner">
-                <Trophy className="text-white h-7 w-7" />
+        
+        {/* Global Player Search */}
+        <div className="mb-8 relative">
+            <form onSubmit={handlePlayerSearch} className="group relative">
+                <input
+                    type="text"
+                    className="w-full bg-white border-2 border-gray-100 rounded-3xl p-6 pl-14 shadow-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all font-black text-lg placeholder:text-gray-300"
+                    placeholder="Globaler Spieler-Quick-Search (z.B. Anton Veselov)..."
+                    value={playerSearchQuery}
+                    onChange={(e) => setPlayerSearchQuery(e.target.value)}
+                />
+                <Search className="absolute left-6 top-1/2 -translate-y-1/2 h-6 w-6 text-gray-300 group-focus-within:text-blue-500 transition-colors" />
+                <button 
+                    type="submit"
+                    disabled={playerSearchQuery.length < 3 || loadingSearch}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 bg-gray-900 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:bg-gray-100 disabled:text-gray-300"
+                >
+                    {loadingSearch ? '...' : 'SUCHEN'}
+                </button>
+            </form>
+        </div>
+
+        {playerSearchResults.length > 0 && (
+          <div className="bg-white shadow-2xl rounded-3xl overflow-hidden border border-blue-100 mb-8 animate-in slide-in-from-top-4 duration-500">
+            <div className="px-8 py-5 bg-blue-600 flex justify-between items-center">
+                <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+                    <User className="h-4 w-4" /> Suchergebnisse
+                </h3>
+                <button onClick={() => setPlayerSearchResults([])} className="text-white/60 hover:text-white">
+                    <X className="h-5 w-5" />
+                </button>
             </div>
-            ÖBV RANKING EXPLORER
+            <div className="divide-y divide-gray-50">
+              {playerSearchResults.map((res) => (
+                <div key={res.id} className="p-6 hover:bg-blue-50/30 transition-all group cursor-pointer flex justify-between items-center" onClick={() => openPlayerHistory(res)}>
+                    <div className="flex items-center gap-6">
+                        <div className="bg-gray-100 p-3 rounded-2xl group-hover:bg-blue-100 transition-colors text-gray-400 group-hover:text-blue-600">
+                            <User className="h-6 w-6" />
+                        </div>
+                        <div>
+                            <p className="text-xl font-black text-gray-900 group-hover:text-blue-600 transition-colors">{res.name}</p>
+                            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1 flex items-center gap-2">
+                                <Shield className="h-3 w-3" /> {res.club}
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex gap-3">
+                        {res.rankings.singles && (
+                            <div className="text-center px-4 py-2 bg-gray-50 rounded-xl border border-gray-100">
+                                <p className="text-[8px] font-black text-gray-400 uppercase tracking-tighter">Singles</p>
+                                <p className="text-sm font-black text-gray-900">#{res.rankings.singles}</p>
+                            </div>
+                        )}
+                        {res.rankings.doubles && (
+                            <div className="text-center px-4 py-2 bg-gray-50 rounded-xl border border-gray-100">
+                                <p className="text-[8px] font-black text-gray-400 uppercase tracking-tighter">Doubles</p>
+                                <p className="text-sm font-black text-gray-900">#{res.rankings.doubles}</p>
+                            </div>
+                        )}
+                        {res.rankings.mixed && (
+                            <div className="text-center px-4 py-2 bg-gray-50 rounded-xl border border-gray-100">
+                                <p className="text-[8px] font-black text-gray-400 uppercase tracking-tighter">Mixed</p>
+                                <p className="text-sm font-black text-gray-900">#{res.rankings.mixed}</p>
+                            </div>
+                        )}
+                        <div className="self-center ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <TrendingUp className="h-6 w-6 text-blue-500" />
+                        </div>
+                    </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="bg-white shadow-sm rounded-3xl p-6 sm:p-8 mb-8 border border-gray-200">
+          <h1 className="text-2xl font-black text-gray-900 mb-8 flex items-center gap-4 tracking-tighter">
+            <div className="bg-yellow-400 p-2 rounded-xl shadow-inner">
+                <Trophy className="text-white h-6 w-6" />
+            </div>
+            ÖBV CLUB EXPLORER
           </h1>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="relative">
-              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Verein auswählen</label>
+              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Club auswählen</label>
               <input
                 type="text"
                 className="block w-full border-2 border-gray-100 rounded-2xl shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-4 bg-gray-50 transition-all font-bold placeholder:text-gray-300"
-                placeholder="Suche Verein..."
+                placeholder="Club-Name..."
                 value={clubSearch}
                 onChange={(e) => {
                   setClubSearch(e.target.value);
@@ -494,7 +611,7 @@ export default function Home() {
                 <tbody className="bg-white divide-y divide-gray-50">
                   {eligibilityResults.map((res, idx) => (
                     <tr key={idx} className="hover:bg-green-50 transition-colors group">
-                      <td className="px-8 py-5 whitespace-nowrap text-base font-black text-gray-900 cursor-pointer group-hover:text-blue-600 flex items-center gap-2" onClick={() => openPlayerHistory({ id: res.id, rank: res.rank, name: res.name, club: '', points: '' })}>
+                      <td className="px-8 py-5 whitespace-nowrap text-base font-black text-gray-900 cursor-pointer group-hover:text-blue-600 flex items-center gap-2" onClick={() => openPlayerHistory({ id: res.id, name: res.name })}>
                         {res.name} <MousePointer2 className="h-3 w-3 opacity-0 group-hover:opacity-100" />
                       </td>
                       <td className="px-8 py-5 whitespace-nowrap text-sm text-gray-500 font-bold">{res.category}</td>
@@ -585,7 +702,7 @@ export default function Home() {
           </div>
         )}
 
-        {!loadingPlayers && !loadingTop5 && !checkingEligibility && selectedClubId && players.length === 0 && top5Results.length === 0 && eligibilityResults.length === 0 && !error && (
+        {!loadingPlayers && !loadingTop5 && !checkingEligibility && !loadingSearch && playerSearchResults.length === 0 && selectedClubId && players.length === 0 && top5Results.length === 0 && eligibilityResults.length === 0 && !error && (
           <div className="text-center py-32 bg-white rounded-[3rem] border-4 border-dashed border-gray-50 shadow-inner mt-8 group">
             <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
                 <TrendingUp className="h-10 w-10 text-gray-200" />
@@ -664,6 +781,7 @@ export default function Home() {
                                 dy={15}
                             />
                             <YAxis 
+                                reversed={false}
                                 domain={['auto', 'auto']} 
                                 tick={{fontSize: 10, fill: '#cbd5e1', fontWeight: 900}} 
                                 tickLine={false}
@@ -698,7 +816,7 @@ export default function Home() {
                             </defs>
                             <CartesianGrid strokeDasharray="6 6" vertical={false} stroke="#f1f5f9" />
                             <XAxis dataKey="date" tick={{fontSize: 9, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} dy={15} />
-                            <YAxis domain={['auto', 'auto']} tick={{fontSize: 10, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} />
+                            <YAxis reversed={false} domain={['auto', 'auto']} tick={{fontSize: 10, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} />
                             <Tooltip content={<CustomTooltip />} />
                             <Area type="monotone" dataKey="rank" stroke="#10b981" strokeWidth={5} fillOpacity={1} fill="url(#colorRankGreen)" />
                           </AreaChart>
@@ -728,7 +846,7 @@ export default function Home() {
                             </defs>
                             <CartesianGrid strokeDasharray="6 6" vertical={false} stroke="#f1f5f9" />
                             <XAxis dataKey="date" tick={{fontSize: 9, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} dy={15} />
-                            <YAxis domain={['auto', 'auto']} tick={{fontSize: 10, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} />
+                            <YAxis reversed={false} domain={['auto', 'auto']} tick={{fontSize: 10, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} />
                             <Tooltip content={<CustomTooltip />} />
                             <Area type="monotone" dataKey="rank" stroke="#a855f7" strokeWidth={5} fillOpacity={1} fill="url(#colorRankPurple)" />
                           </AreaChart>

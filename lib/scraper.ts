@@ -38,6 +38,17 @@ export interface PlayerHistory {
   mixed: RankHistoryPoint[];
 }
 
+export interface SearchResult {
+  id: string;
+  name: string;
+  club: string;
+  rankings: {
+    singles?: number;
+    doubles?: number;
+    mixed?: number;
+  };
+}
+
 export interface Metadata {
   actualId: string;
   publications: Publication[];
@@ -218,6 +229,85 @@ export async function fetchPlayers(
   return players;
 }
 
+export async function searchPlayers(query: string): Promise<SearchResult[]> {
+  const cookies = await getSessionCookies();
+  const url = `${BASE_URL}/find/player?q=${encodeURIComponent(query)}`;
+  
+  const res = await axios.get(url, {
+    headers: {
+      'Cookie': cookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    }
+  });
+
+  const $ = cheerio.load(res.data);
+  const results: SearchResult[] = [];
+
+  // TS search results are often in list__item
+  $('.list__item').each((i, el) => {
+    const nameLink = $(el).find('a[href*="/player-profile/"]');
+    if (nameLink.length) {
+      const name = nameLink.text().trim();
+      const href = nameLink.attr('href');
+      const profileId = href?.split('/player-profile/')[1] || '';
+      
+      const clubSubtitle = $(el).find('.nav-link__subtitle').text().trim();
+      
+      if (name && profileId) {
+        // Avoid duplicates (TS sometimes shows multiples)
+        if (!results.find(r => r.id === profileId)) {
+          results.push({
+            id: profileId,
+            name,
+            club: clubSubtitle || 'Unknown Club',
+            rankings: {}
+          });
+        }
+      }
+    }
+  });
+
+  // For each result, let's try to get current rankings
+  for (const r of results) {
+    try {
+      const rankUrl = `${BASE_URL}/player-profile/${r.id}/ranking`;
+      const rankRes = await axios.get(rankUrl, {
+        headers: {
+          'Cookie': cookies,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+      });
+      const $rank = cheerio.load(rankRes.data);
+      const table = $rank('table.ruler').first();
+      
+      const catNames = {
+        singles: ["singles", "einzel"],
+        mixed: ["mixed"],
+        doubles: ["doubles", "doppel"]
+      };
+
+      table.find('tr').each((i, row) => {
+        const cols = $rank(row).find('td');
+        if (cols.length >= 2) {
+          const catName = $rank(cols[0]).text().toLowerCase();
+          const rankText = $rank(cols[1]).text().trim().replace(/[^0-9]/g, '');
+          const rank = parseInt(rankText);
+          
+          if (!isNaN(rank)) {
+            if (catNames.mixed.some(n => catName.includes(n))) r.rankings.mixed = rank;
+            else if (catNames.singles.some(n => catName.includes(n))) r.rankings.singles = rank;
+            else if (catNames.doubles.some(n => catName.includes(n))) r.rankings.doubles = rank;
+          }
+        }
+      });
+    } catch (err) {
+      console.error(`Error fetching summary for ${r.name}:`, err);
+    }
+  }
+
+  return results;
+}
+
 export async function fetchPlayerHistory(
   actualId: string,
   playerId: string,
@@ -226,7 +316,6 @@ export async function fetchPlayerHistory(
 ): Promise<PlayerHistory> {
   const cookies = await getSessionCookies();
   
-  // Take every 4th publication (approx once a month) to cover a full year (~13 points)
   const monthlySubset: Publication[] = [];
   for (let i = 0; i < publications.length && monthlySubset.length < 13; i += 4) {
     monthlySubset.push(publications[i]);
@@ -270,7 +359,6 @@ export async function fetchPlayerHistory(
           const rank = parseInt(rankText);
           
           if (!isNaN(rank)) {
-            // FIX: Check MIXED first because "Mixed Doubles" contains "doubles"
             if (catNames.mixed.some(n => catName.includes(n))) mRank = rank;
             else if (catNames.singles.some(n => catName.includes(n))) sRank = rank;
             else if (catNames.doubles.some(n => catName.includes(n))) dRank = rank;
