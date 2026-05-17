@@ -20,10 +20,22 @@ export interface Club {
 }
 
 export interface Player {
+  id: string;
   rank: string;
   name: string;
   club: string;
   points: string;
+}
+
+export interface RankHistoryPoint {
+  date: string;
+  rank: number | null;
+}
+
+export interface PlayerHistory {
+  singles: RankHistoryPoint[];
+  doubles: RankHistoryPoint[];
+  mixed: RankHistoryPoint[];
 }
 
 export interface Metadata {
@@ -41,7 +53,6 @@ export async function getSessionCookies() {
     withCredentials: true,
   });
 
-  // 1. POST to cookiewall/Save
   const params = new URLSearchParams();
   params.append('CookiePurposes', '1');
   params.append('CookiePurposes', '2');
@@ -60,7 +71,6 @@ export async function getSessionCookies() {
     }
   );
 
-  // Extract cookies from response
   const cookies = res.headers['set-cookie'] || [];
   return cookies.map(c => c.split(';')[0]).join('; ');
 }
@@ -78,19 +88,17 @@ export async function fetchMetadata(): Promise<Metadata> {
   const $ = cheerio.load(res.data);
   let actualId = '355';
 
-  // Find actual ranking ID
   $('a[href*="category.aspx"]').each((i, el) => {
     const href = $(el).attr('href');
     if (href && href.includes('id=')) {
       const match = href.match(/id=([^&]+)/);
       if (match) {
         actualId = match[1];
-        return false; // break
+        return false;
       }
     }
   });
 
-  // Go to category page to get pubs and clubs
   const catUrl = `${BASE_URL}/ranking/category.aspx?id=${actualId}&category=4670`;
   const resCat = await axios.get(catUrl, {
     headers: {
@@ -147,10 +155,7 @@ export async function fetchPlayers(
   clubId?: string
 ): Promise<Player[]> {
   const cookies = await getSessionCookies();
-  let url = `${BASE_URL}/ranking/category.aspx?id=${actualId}&category=${catId}&ps=500`;
-  if (pubId) {
-    url += `&publicationid=${pubId}`;
-  }
+  let url = `${BASE_URL}/ranking/category.aspx?id=${pubId || actualId}&category=${catId}&ps=500`;
   if (clubId) {
     url += `&C${catId}FOG_3_F2048=${clubId}`;
   }
@@ -187,11 +192,20 @@ export async function fetchPlayers(
     if (i <= headerRowIndex) return;
     const cols = $(row).find('td');
     if (cols.length >= 11) {
+      const pNameLink = $(cols[3]).find('a');
       const pName = $(cols[3]).text().trim();
       const cName = $(cols[10]).text().trim();
       
+      let pId = '';
+      const href = pNameLink.attr('href');
+      if (href) {
+        const match = href.match(/player=([^&]+)/);
+        if (match) pId = match[1];
+      }
+      
       if (pName) {
         players.push({
+          id: pId,
           rank: $(cols[0]).text().trim(),
           name: pName,
           club: cName,
@@ -202,4 +216,77 @@ export async function fetchPlayers(
   });
 
   return players;
+}
+
+export async function fetchPlayerHistory(
+  actualId: string,
+  playerId: string,
+  clubId: string,
+  publications: Publication[]
+): Promise<PlayerHistory> {
+  const cookies = await getSessionCookies();
+  
+  // Take every 4th publication (approx once a month) to cover a full year (~13 points)
+  const monthlySubset: Publication[] = [];
+  for (let i = 0; i < publications.length && monthlySubset.length < 13; i += 4) {
+    monthlySubset.push(publications[i]);
+  }
+  
+  const history: PlayerHistory = {
+    singles: [],
+    doubles: [],
+    mixed: []
+  };
+
+  const catNames = {
+    singles: ["singles", "einzel"],
+    mixed: ["mixed"],
+    doubles: ["doubles", "doppel"]
+  };
+
+  for (const pub of monthlySubset.reverse()) {
+    try {
+      const url = `${BASE_URL}/ranking/player.aspx?id=${pub.id}&player=${playerId}`;
+      const res = await axios.get(url, {
+        headers: {
+          'Cookie': cookies,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+      });
+      
+      const $ = cheerio.load(res.data);
+      const table = $('table.ruler').first();
+      const rows = table.find('tr');
+      
+      let sRank: number | null = null;
+      let dRank: number | null = null;
+      let mRank: number | null = null;
+
+      rows.each((i, row) => {
+        const cols = $(row).find('td');
+        if (cols.length >= 2) {
+          const catName = $(cols[0]).text().toLowerCase();
+          const rankText = $(cols[1]).text().trim().replace(/[^0-9]/g, '');
+          const rank = parseInt(rankText);
+          
+          if (!isNaN(rank)) {
+            // FIX: Check MIXED first because "Mixed Doubles" contains "doubles"
+            if (catNames.mixed.some(n => catName.includes(n))) mRank = rank;
+            else if (catNames.singles.some(n => catName.includes(n))) sRank = rank;
+            else if (catNames.doubles.some(n => catName.includes(n))) dRank = rank;
+          }
+        }
+      });
+
+      const dateLabel = pub.name.split(' (')[0]; 
+      history.singles.push({ date: dateLabel, rank: sRank });
+      history.doubles.push({ date: dateLabel, rank: dRank });
+      history.mixed.push({ date: dateLabel, rank: mRank });
+
+    } catch (err) {
+      console.error(`Error fetching history for ${pub.name}:`, err);
+    }
+  }
+
+  return history;
 }

@@ -3,6 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import Fuse from 'fuse.js';
+import { 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+} from 'recharts';
+import { X, TrendingUp, Calendar, Trophy, Medal, Info, MousePointer2 } from 'lucide-react';
 
 interface Club {
   id: string;
@@ -17,6 +21,7 @@ interface Metadata {
 }
 
 interface Player {
+  id: string;
   rank: string;
   name: string;
   club: string;
@@ -34,6 +39,7 @@ interface AttendanceRecord {
 }
 
 interface EligibilityResult {
+  id: string;
   name: string;
   rank: string;
   clubRank: number;
@@ -42,8 +48,20 @@ interface EligibilityResult {
   eligible: boolean;
 }
 
+interface RankHistoryPoint {
+  date: string;
+  rank: number | null;
+}
+
+interface PlayerHistory {
+  singles: RankHistoryPoint[];
+  doubles: RankHistoryPoint[];
+  mixed: RankHistoryPoint[];
+}
+
 export default function Home() {
   const [metadata, setMetadata] = useState<Metadata | null>(null);
+  const [mounted, setMounted] = useState(false);
   const [loadingMetadata, setLoadingMetadata] = useState(true);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [loadingTop5, setLoadingTop5] = useState(false);
@@ -58,14 +76,18 @@ export default function Home() {
   const [clubSearch, setClubSearch] = useState('');
   const [topX, setTopX] = useState(5);
 
-  // Reimbursement State
   const [attendanceData, setAttendanceData] = useState<AttendanceRecord[]>([]);
   const [minTrainings, setMinTrainings] = useState(10);
   const [eligibilityResults, setEligibilityResults] = useState<EligibilityResult[]>([]);
   const [checkingEligibility, setCheckingEligibility] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
+  const [playerHistory, setPlayerHistory] = useState<PlayerHistory | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
   useEffect(() => {
+    setMounted(true);
     fetch('/api/metadata')
       .then((res) => res.json())
       .then((data) => {
@@ -160,7 +182,7 @@ export default function Home() {
         const records: AttendanceRecord[] = [];
         data.slice(1).forEach((row) => {
           const name = row[0];
-          const count = parseInt(row[6]); // Column G is index 6
+          const count = parseInt(row[6]);
           if (name && !isNaN(count)) {
             records.push({ name: String(name).trim(), count });
           }
@@ -201,7 +223,6 @@ export default function Home() {
         
         if (data.error) continue;
 
-        // Take top X from this category
         const topPlayers = data.slice(0, topX);
         topPlayers.forEach((p: Player, idx: number) => {
           const match = fuse.search(p.name);
@@ -209,6 +230,7 @@ export default function Home() {
             const attendance = match[0].item.count;
             if (attendance >= minTrainings) {
               allEligible.push({
+                id: p.id,
                 name: p.name,
                 rank: p.rank,
                 clubRank: idx + 1,
@@ -228,6 +250,32 @@ export default function Home() {
     }
   };
 
+  const openPlayerHistory = async (player: Player) => {
+    if (!metadata || !player.id) {
+      console.warn("Cannot fetch history: Missing player ID");
+      return;
+    }
+    setSelectedPlayer(player);
+    setPlayerHistory(null);
+    setLoadingHistory(true);
+    
+    try {
+      const params = new URLSearchParams({
+        actualId: metadata.actualId,
+        playerId: player.id,
+        clubId: selectedClubId
+      });
+      const res = await fetch(`/api/history?${params.toString()}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setPlayerHistory(data);
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
   if (loadingMetadata) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
@@ -243,18 +291,37 @@ export default function Home() {
     c.name.toLowerCase().includes(clubSearch.toLowerCase())
   ) || [];
 
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-3 border border-gray-200 shadow-2xl rounded-xl">
+          <p className="text-[10px] text-gray-400 mb-1 font-black uppercase tracking-widest">{label}</p>
+          <p className="text-lg font-black text-gray-900 leading-tight">
+            Rang <span className="text-blue-600">#{payload[0].value}</span>
+          </p>
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
-    <main className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8 font-sans">
       <div className="max-w-4xl mx-auto">
-        <div className="bg-white shadow-sm rounded-lg p-6 mb-8 border border-gray-200">
-          <h1 className="text-2xl font-bold text-gray-900 mb-6">ÖBV Club Spieler Ranking & Rückerstattung</h1>
+        <div className="bg-white shadow-sm rounded-3xl p-6 sm:p-8 mb-8 border border-gray-200">
+          <h1 className="text-3xl font-black text-gray-900 mb-8 flex items-center gap-4 tracking-tighter">
+            <div className="bg-yellow-400 p-2 rounded-xl shadow-inner">
+                <Trophy className="text-white h-7 w-7" />
+            </div>
+            ÖBV RANKING EXPLORER
+          </h1>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="relative">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Verein auswählen</label>
+              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Verein auswählen</label>
               <input
                 type="text"
-                className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-2"
+                className="block w-full border-2 border-gray-100 rounded-2xl shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-4 bg-gray-50 transition-all font-bold placeholder:text-gray-300"
                 placeholder="Suche Verein..."
                 value={clubSearch}
                 onChange={(e) => {
@@ -263,12 +330,12 @@ export default function Home() {
                 }}
               />
               {clubSearch && !selectedClubId && (
-                <div className="absolute z-10 mt-1 w-full bg-white shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm">
+                <div className="absolute z-30 mt-2 w-full bg-white shadow-2xl max-h-60 rounded-2xl py-2 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm border border-gray-100 backdrop-blur-xl">
                   {filteredClubs.length > 0 ? (
                     filteredClubs.map((club) => (
                       <div
                         key={club.id}
-                        className="cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-blue-600 hover:text-white text-gray-900"
+                        className="cursor-pointer select-none relative py-3 pl-5 pr-9 hover:bg-blue-600 hover:text-white text-gray-800 transition-all font-bold"
                         onClick={() => {
                           setSelectedClubId(club.id);
                           setSelectedClubName(club.name);
@@ -279,67 +346,70 @@ export default function Home() {
                       </div>
                     ))
                   ) : (
-                    <div className="py-2 pl-3 pr-9 text-gray-500">Kein Verein gefunden</div>
+                    <div className="py-3 pl-5 pr-9 text-gray-400 italic">Kein Verein gefunden</div>
                   )}
                 </div>
               )}
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Kategorie</label>
-              <select
-                className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-2"
-                value={selectedCat}
-                onChange={(e) => setSelectedCat(e.target.value)}
-              >
-                {metadata?.categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>{cat.name}</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Kategorie</label>
+                  <select
+                    className="block w-full border-2 border-gray-100 rounded-2xl shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-4 bg-gray-50 font-bold transition-all"
+                    value={selectedCat}
+                    onChange={(e) => setSelectedCat(e.target.value)}
+                  >
+                    {metadata?.categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1 flex items-center gap-1">
+                    Datum
+                  </label>
+                  <select
+                    className="block w-full border-2 border-gray-100 rounded-2xl shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-4 bg-gray-50 font-bold transition-all"
+                    value={selectedPub}
+                    onChange={(e) => setSelectedPub(e.target.value)}
+                  >
+                    {metadata?.publications.map((pub) => (
+                      <option key={pub.id} value={pub.id}>{pub.name}</option>
+                    ))}
+                  </select>
+                </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Datum (RL-Woche)</label>
-              <select
-                className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-2"
-                value={selectedPub}
-                onChange={(e) => setSelectedPub(e.target.value)}
-              >
-                {metadata?.publications.map((pub) => (
-                  <option key={pub.id} value={pub.id}>{pub.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-2">
+            <div className="md:col-span-2 flex flex-col sm:flex-row gap-4">
               <button
                 onClick={handleSearch}
                 disabled={loadingPlayers || loadingTop5 || checkingEligibility || !selectedClubId}
-                className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
-                  loadingPlayers || loadingTop5 || checkingEligibility || !selectedClubId ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
-                } focus:outline-none h-10`}
+                className={`flex-1 flex justify-center py-4 px-6 border border-transparent rounded-2xl shadow-lg text-sm font-black text-white transition-all uppercase tracking-widest ${
+                  loadingPlayers || loadingTop5 || checkingEligibility || !selectedClubId ? 'bg-gray-200 text-gray-400' : 'bg-gray-900 hover:bg-black active:scale-95'
+                } focus:outline-none h-14 items-center`}
               >
-                {loadingPlayers ? 'Lade...' : 'Einzelne Liste anzeigen'}
+                {loadingPlayers ? 'Lade...' : 'Einzelne Liste'}
               </button>
               
-              <div className="flex gap-2">
-                <div className="w-20">
+              <div className="flex flex-1 gap-4">
+                <div className="w-24">
                   <input
                     type="number"
                     min="1"
                     max="50"
-                    className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-2 h-10 text-center"
+                    className="block w-full border-2 border-gray-100 rounded-2xl shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-4 h-14 text-center bg-gray-50 font-black text-lg"
                     value={topX}
                     onChange={(e) => setTopX(parseInt(e.target.value) || 1)}
-                    title="Anzahl der Top-Spieler (X)"
                   />
                 </div>
                 <button
                   onClick={handleFetchTop5}
                   disabled={loadingPlayers || loadingTop5 || checkingEligibility || !selectedClubId}
-                  className={`flex-1 flex justify-center py-2 px-4 border border-blue-600 rounded-md shadow-sm text-sm font-medium ${
-                    loadingPlayers || loadingTop5 || checkingEligibility || !selectedClubId ? 'text-gray-400 border-gray-300' : 'text-blue-600 hover:bg-blue-50'
-                  } focus:outline-none h-10`}
+                  className={`flex-grow flex justify-center py-4 px-6 border-2 border-blue-600 rounded-2xl shadow-sm text-sm font-black transition-all uppercase tracking-widest ${
+                    loadingPlayers || loadingTop5 || checkingEligibility || !selectedClubId ? 'text-gray-300 border-gray-200' : 'text-blue-600 hover:bg-blue-50 active:scale-95'
+                  } focus:outline-none h-14 items-center`}
                 >
                   {loadingTop5 ? `Lade Top-${topX}...` : `Top-${topX} Übersicht`}
                 </button>
@@ -347,77 +417,90 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mt-8 pt-6 border-t border-gray-100">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Turnier-Rückerstattung prüfen</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
+          <div className="mt-12 pt-8 border-t border-gray-100">
+            <div className="flex items-center gap-3 mb-6">
+                <div className="bg-green-100 p-2 rounded-xl">
+                    <Medal className="text-green-600 h-6 w-6" />
+                </div>
+                <h2 className="text-xl font-black text-gray-900 uppercase tracking-tight">
+                  TURNIER-RÜCKERSTATTUNG
+                </h2>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-end">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mind. Trainings (K)</label>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Mind. Trainings (K)</label>
                 <input
                   type="number"
                   min="0"
-                  className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 sm:text-sm border p-2"
+                  className="block w-full border-2 border-gray-100 rounded-2xl shadow-sm focus:ring-green-500 focus:border-green-500 sm:text-sm border p-4 bg-gray-50 font-black text-lg"
                   value={minTrainings}
                   onChange={(e) => setMinTrainings(parseInt(e.target.value) || 0)}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Anwesenheitsliste (.xlsx)</label>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Anwesenheitsliste (.xlsx)</label>
                 <input
                   type="file"
                   accept=".xlsx, .xls"
                   ref={fileInputRef}
                   onChange={handleFileUpload}
-                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100 cursor-pointer"
+                  className="block w-full text-sm text-gray-400 file:mr-4 file:py-3 file:px-6 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-green-600 file:text-white hover:file:bg-green-700 cursor-pointer border-2 border-gray-100 rounded-2xl bg-gray-50 h-14"
                 />
               </div>
               <div className="md:col-span-2">
                 <button
                   onClick={checkEligibility}
                   disabled={loadingPlayers || loadingTop5 || checkingEligibility || !selectedClubId || attendanceData.length === 0}
-                  className={`w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-base font-bold text-white ${
-                    loadingPlayers || loadingTop5 || checkingEligibility || !selectedClubId || attendanceData.length === 0 ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'
-                  } focus:outline-none h-12`}
+                  className={`w-full flex justify-center py-4 px-6 border border-transparent rounded-2xl shadow-xl text-base font-black text-white transition-all uppercase tracking-widest ${
+                    loadingPlayers || loadingTop5 || checkingEligibility || !selectedClubId || attendanceData.length === 0 ? 'bg-gray-200' : 'bg-green-600 hover:bg-green-700 active:scale-95 shadow-green-200/50'
+                  } focus:outline-none h-16 items-center`}
                 >
-                  {checkingEligibility ? 'Prüfe Berechtigung...' : 'Rückerstattung prüfen (Top-X & K)'}
+                  {checkingEligibility ? 'PRÜFE...' : 'ELIGIBILITY CHECK STARTEN'}
                 </button>
               </div>
             </div>
           </div>
 
           {error && (
-            <div className="mt-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
-              {error}
+            <div className="mt-6 p-5 bg-red-50 border-2 border-red-100 text-red-700 rounded-2xl text-sm font-bold flex items-center gap-3 animate-pulse">
+              <Info className="h-6 w-6 shrink-0" /> {error}
             </div>
           )}
         </div>
 
         {eligibilityResults.length > 0 && (
-          <div className="bg-white shadow-sm rounded-lg overflow-hidden border border-green-200">
-            <div className="px-4 py-5 sm:px-6 bg-green-50 border-b border-green-200">
-              <h3 className="text-lg leading-6 font-bold text-green-800">
-                Berechtigte Spieler für Rückerstattung
-              </h3>
-              <p className="text-sm text-green-600">Top-{topX} im Club und mind. {minTrainings} Trainings</p>
+          <div className="bg-white shadow-2xl rounded-3xl overflow-hidden border-2 border-green-500/20 mb-12 animate-in fade-in zoom-in duration-500">
+            <div className="px-8 py-6 bg-green-600 flex justify-between items-center">
+              <div>
+                <h3 className="text-2xl leading-6 font-black text-white uppercase tracking-tight">
+                    Berechtigte Spieler
+                </h3>
+                <p className="text-sm text-green-100 font-bold mt-1 uppercase tracking-widest">Top-{topX} im Club & mind. {minTrainings} Trainings</p>
+              </div>
+              <Medal className="h-10 w-10 text-white/50" />
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
+              <table className="min-w-full divide-y divide-gray-100">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Kategorie</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Club-Rang</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">ÖBV-Rang</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Trainings</th>
+                    <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Name</th>
+                    <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Kategorie</th>
+                    <th className="px-8 py-5 text-center text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Club-Rang</th>
+                    <th className="px-8 py-5 text-center text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">ÖBV-Rang</th>
+                    <th className="px-8 py-5 text-right text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Trainings</th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="bg-white divide-y divide-gray-50">
                   {eligibilityResults.map((res, idx) => (
-                    <tr key={idx} className="hover:bg-green-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">{res.name}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{res.category}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-blue-600 font-bold">{res.clubRank}.</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-500">#{res.rank}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-mono text-green-600 font-bold">{res.attendance}</td>
+                    <tr key={idx} className="hover:bg-green-50 transition-colors group">
+                      <td className="px-8 py-5 whitespace-nowrap text-base font-black text-gray-900 cursor-pointer group-hover:text-blue-600 flex items-center gap-2" onClick={() => openPlayerHistory({ id: res.id, rank: res.rank, name: res.name, club: '', points: '' })}>
+                        {res.name} <MousePointer2 className="h-3 w-3 opacity-0 group-hover:opacity-100" />
+                      </td>
+                      <td className="px-8 py-5 whitespace-nowrap text-sm text-gray-500 font-bold">{res.category}</td>
+                      <td className="px-8 py-5 whitespace-nowrap text-sm text-center font-black text-blue-600 bg-blue-50/30">{res.clubRank}.</td>
+                      <td className="px-8 py-5 whitespace-nowrap text-sm text-center text-gray-300 font-black tracking-tighter italic">#{res.rank}</td>
+                      <td className="px-8 py-5 whitespace-nowrap text-sm text-right font-black text-green-600 bg-green-50/50">{res.attendance}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -427,31 +510,34 @@ export default function Home() {
         )}
 
         {players.length > 0 && (
-          <div className="bg-white shadow-sm rounded-lg overflow-hidden border border-gray-200 mt-8">
-            <div className="px-4 py-5 sm:px-6 bg-gray-50 border-b border-gray-200">
-              <h3 className="text-lg leading-6 font-medium text-gray-900">
-                Spieler von {selectedClubName}
+          <div className="bg-white shadow-2xl rounded-3xl overflow-hidden border border-gray-100 mt-8 animate-in slide-in-from-bottom-8 duration-700">
+            <div className="px-8 py-6 bg-gray-900 flex justify-between items-center">
+              <h3 className="text-xl leading-6 font-black text-white uppercase tracking-widest">
+                {selectedClubName}
               </h3>
+              <div className="bg-blue-600 px-3 py-1 rounded-full text-[10px] font-black text-white">{players.length} SPIELER</div>
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
+              <table className="min-w-full divide-y divide-gray-100">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Rang</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Club-Rang</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Spieler</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Verein</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Punkte</th>
+                    <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] w-24">ÖBV</th>
+                    <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] w-24">Club</th>
+                    <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Spieler</th>
+                    <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Verein</th>
+                    <th className="px-8 py-5 text-right text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Punkte</th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="bg-white divide-y divide-gray-50">
                   {players.map((player, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{player.rank}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-bold">{idx + 1}.</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{player.name}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{player.club}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right font-mono">{player.points}</td>
+                    <tr key={idx} className="hover:bg-blue-50/50 transition-colors group">
+                      <td className="px-8 py-5 whitespace-nowrap text-sm font-black text-gray-300 italic">#{player.rank}</td>
+                      <td className="px-8 py-5 whitespace-nowrap text-sm text-blue-600 font-black">{idx + 1}.</td>
+                      <td className="px-8 py-5 whitespace-nowrap text-base font-black text-gray-900 cursor-pointer group-hover:text-blue-700 flex items-center gap-2" onClick={() => openPlayerHistory(player)}>
+                        {player.name} <MousePointer2 className="h-3 w-3 opacity-0 group-hover:opacity-100 text-blue-400" />
+                      </td>
+                      <td className="px-8 py-5 whitespace-nowrap text-sm text-gray-400 font-bold">{player.club}</td>
+                      <td className="px-8 py-5 whitespace-nowrap text-sm text-gray-900 text-right font-black tabular-nums">{player.points}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -461,30 +547,36 @@ export default function Home() {
         )}
 
         {top5Results.length > 0 && (
-          <div className="mt-8 space-y-6">
-            <h2 className="text-xl font-bold text-gray-900">Top-{topX} Übersicht: {selectedClubName}</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="mt-12 space-y-10 animate-in fade-in duration-1000">
+            <div className="flex items-center gap-6">
+                <h2 className="text-3xl font-black text-gray-900 uppercase tracking-tighter italic shrink-0">TOP-{topX} SNAPSHOT</h2>
+                <div className="h-[2px] flex-grow bg-gradient-to-r from-gray-200 to-transparent rounded-full"></div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 sm:gap-10">
               {top5Results.map((result, idx) => (
-                <div key={idx} className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
-                  <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-                    <h3 className="text-sm font-bold text-gray-700">{result.categoryName}</h3>
+                <div key={idx} className="bg-white shadow-xl rounded-[2rem] border border-gray-100 overflow-hidden hover:shadow-2xl transition-all duration-300 group">
+                  <div className="px-6 py-5 bg-gray-50 border-b border-gray-50 flex justify-between items-center group-hover:bg-blue-600 transition-colors">
+                    <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] group-hover:text-white transition-colors">{result.categoryName}</h3>
+                    <TrendingUp className="h-4 w-4 text-gray-300 group-hover:text-white transition-colors" />
                   </div>
-                  <div className="p-0">
+                  <div className="p-4 sm:p-5">
                     {result.players.length > 0 ? (
-                      <ul className="divide-y divide-gray-100">
+                      <ul className="space-y-2">
                         {result.players.map((p, pIdx) => (
-                          <li key={pIdx} className="px-4 py-2 flex justify-between text-sm hover:bg-gray-50">
-                            <span className="text-gray-900 font-medium">
-                              <span className="text-blue-600 font-bold mr-2">{pIdx + 1}.</span>
-                              <span className="text-gray-400 mr-2">#{p.rank}</span>
-                              {p.name}
-                            </span>
-                            <span className="text-gray-500 font-mono">{p.points}</span>
+                          <li key={pIdx} className="px-5 py-4 flex justify-between items-center rounded-2xl hover:bg-blue-50 transition-all group/item cursor-pointer border border-transparent hover:border-blue-100" onClick={() => openPlayerHistory(p)}>
+                            <div className="flex items-center gap-5">
+                                <span className="text-xl font-black text-blue-600 w-8">{pIdx + 1}.</span>
+                                <div>
+                                    <p className="text-base font-black text-gray-900 group-hover/item:text-blue-700 transition-colors leading-none mb-1.5">{p.name}</p>
+                                    <p className="text-[10px] text-gray-300 font-black uppercase tracking-widest">ÖBV RANKING #{p.rank}</p>
+                                </div>
+                            </div>
+                            <span className="text-[11px] font-black text-gray-400 bg-gray-50 px-3 py-1.5 rounded-lg tabular-nums border border-gray-100">{p.points}</span>
                           </li>
                         ))}
                       </ul>
                     ) : (
-                      <p className="p-4 text-sm text-gray-400 italic">Keine Spieler gelistet</p>
+                      <p className="p-10 text-xs text-gray-300 uppercase tracking-widest text-center font-black">No Players</p>
                     )}
                   </div>
                 </div>
@@ -494,11 +586,171 @@ export default function Home() {
         )}
 
         {!loadingPlayers && !loadingTop5 && !checkingEligibility && selectedClubId && players.length === 0 && top5Results.length === 0 && eligibilityResults.length === 0 && !error && (
-          <div className="text-center py-12 bg-white rounded-lg border border-gray-200 shadow-sm">
-            <p className="text-gray-500">Wählen Sie eine Aktion oben aus.</p>
+          <div className="text-center py-32 bg-white rounded-[3rem] border-4 border-dashed border-gray-50 shadow-inner mt-8 group">
+            <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
+                <TrendingUp className="h-10 w-10 text-gray-200" />
+            </div>
+            <p className="text-gray-300 font-black uppercase tracking-[0.3em] text-xs">Wählen Sie eine Aktion aus</p>
           </div>
         )}
       </div>
+
+      {/* History Modal */}
+      {selectedPlayer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+          <div className="fixed inset-0 bg-gray-950/80 backdrop-blur-md transition-opacity" aria-hidden="true" onClick={() => setSelectedPlayer(null)}></div>
+          
+          <div className="relative bg-white rounded-[2.5rem] text-left overflow-hidden shadow-2xl transform transition-all w-full max-w-4xl max-h-[92vh] flex flex-col border border-white/20">
+            <div className="p-8 sm:p-10 flex-shrink-0 border-b border-gray-50 flex justify-between items-start bg-white">
+                <div>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="h-2 w-2 rounded-full bg-blue-600 animate-pulse"></div>
+                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em]">Live Player Analysis</span>
+                  </div>
+                  <h3 className="text-4xl font-black text-gray-900 tracking-tighter uppercase leading-none" id="modal-title">
+                    {selectedPlayer.name}
+                  </h3>
+                  <div className="text-gray-400 font-black uppercase tracking-[0.2em] text-xs mt-3 flex items-center gap-2">
+                    <div className="h-4 w-[1px] bg-gray-200"></div>
+                    {selectedClubName || 'Österreichischer Verband'}
+                  </div>
+                </div>
+                <button onClick={() => setSelectedPlayer(null)} className="p-3 hover:bg-gray-100 rounded-2xl transition-all active:scale-90 bg-gray-50">
+                  <X className="h-8 w-8 text-gray-900" />
+                </button>
+            </div>
+
+            <div className="flex-grow overflow-y-auto p-8 sm:p-10 bg-white">
+                {loadingHistory ? (
+                  <div className="py-40 text-center">
+                    <div className="relative h-24 w-24 mx-auto mb-10">
+                        <div className="absolute inset-0 border-8 border-gray-50 rounded-full"></div>
+                        <div className="absolute inset-0 border-8 border-t-blue-600 rounded-full animate-spin"></div>
+                        <div className="absolute inset-4 bg-blue-50 rounded-full flex items-center justify-center">
+                            <TrendingUp className="h-6 w-6 text-blue-600" />
+                        </div>
+                    </div>
+                    <p className="text-gray-900 font-black text-2xl tracking-tighter uppercase">Generiere Report...</p>
+                    <p className="text-gray-400 font-bold mt-3 uppercase tracking-widest text-[10px]">Analyse der letzten 12 Monate läuft</p>
+                  </div>
+                ) : playerHistory && mounted ? (
+                  <div className="space-y-20">
+                    {/* Singles Chart */}
+                    <div className="bg-white rounded-[2rem] p-4 sm:p-2">
+                      <div className="flex justify-between items-end mb-10 px-4">
+                        <div>
+                            <h4 className="text-xs font-black text-gray-300 uppercase tracking-[0.3em] mb-2">
+                                Discipline 01
+                            </h4>
+                            <p className="text-xl font-black text-gray-900 tracking-tight uppercase">Einzel-Verlauf</p>
+                        </div>
+                        <div className="px-4 py-2 bg-blue-50 text-blue-600 rounded-xl text-[10px] font-black tracking-widest border border-blue-100">YEARLY TREND</div>
+                      </div>
+                      <div className="h-72 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={playerHistory.singles} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="colorRank" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="6 6" vertical={false} stroke="#f1f5f9" />
+                            <XAxis 
+                                dataKey="date" 
+                                tick={{fontSize: 9, fill: '#cbd5e1', fontWeight: 900}} 
+                                tickLine={false}
+                                axisLine={false}
+                                dy={15}
+                            />
+                            <YAxis 
+                                domain={['auto', 'auto']} 
+                                tick={{fontSize: 10, fill: '#cbd5e1', fontWeight: 900}} 
+                                tickLine={false}
+                                axisLine={false}
+                            />
+                            <Tooltip content={<CustomTooltip />} />
+                            <Area type="monotone" dataKey="rank" stroke="#3b82f6" strokeWidth={5} fillOpacity={1} fill="url(#colorRank)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Doubles Chart */}
+                    <div className="bg-white rounded-[2rem] p-4 sm:p-2">
+                      <div className="flex justify-between items-end mb-10 px-4">
+                        <div>
+                            <h4 className="text-xs font-black text-gray-300 uppercase tracking-[0.3em] mb-2">
+                                Discipline 02
+                            </h4>
+                            <p className="text-xl font-black text-gray-900 tracking-tight uppercase">Doppel-Verlauf</p>
+                        </div>
+                        <div className="px-4 py-2 bg-green-50 text-green-600 rounded-xl text-[10px] font-black tracking-widest border border-green-100">YEARLY TREND</div>
+                      </div>
+                      <div className="h-72 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={playerHistory.doubles} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="colorRankGreen" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="6 6" vertical={false} stroke="#f1f5f9" />
+                            <XAxis dataKey="date" tick={{fontSize: 9, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} dy={15} />
+                            <YAxis domain={['auto', 'auto']} tick={{fontSize: 10, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} />
+                            <Tooltip content={<CustomTooltip />} />
+                            <Area type="monotone" dataKey="rank" stroke="#10b981" strokeWidth={5} fillOpacity={1} fill="url(#colorRankGreen)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Mixed Chart */}
+                    <div className="bg-white rounded-[2rem] p-4 sm:p-2 mb-10">
+                      <div className="flex justify-between items-end mb-10 px-4">
+                        <div>
+                            <h4 className="text-xs font-black text-gray-300 uppercase tracking-[0.3em] mb-2">
+                                Discipline 03
+                            </h4>
+                            <p className="text-xl font-black text-gray-900 tracking-tight uppercase">Mixed-Verlauf</p>
+                        </div>
+                        <div className="px-4 py-2 bg-purple-50 text-purple-600 rounded-xl text-[10px] font-black tracking-widest border border-purple-100">YEARLY TREND</div>
+                      </div>
+                      <div className="h-72 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={playerHistory.mixed} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="colorRankPurple" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#a855f7" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="#a855f7" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="6 6" vertical={false} stroke="#f1f5f9" />
+                            <XAxis dataKey="date" tick={{fontSize: 9, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} dy={15} />
+                            <YAxis domain={['auto', 'auto']} tick={{fontSize: 10, fill: '#cbd5e1', fontWeight: 900}} tickLine={false} axisLine={false} />
+                            <Tooltip content={<CustomTooltip />} />
+                            <Area type="monotone" dataKey="rank" stroke="#a855f7" strokeWidth={5} fillOpacity={1} fill="url(#colorRankPurple)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-20 text-center text-red-500 font-bold uppercase tracking-[0.2em]">
+                    Data Unavailable for this player.
+                  </div>
+                )}
+            </div>
+            
+            <div className="p-8 sm:p-10 border-t border-gray-50 flex-shrink-0 bg-white">
+                <button type="button" onClick={() => setSelectedPlayer(null)} className="w-full py-5 px-8 bg-gray-900 rounded-[1.5rem] text-sm font-black text-white hover:bg-black transition-all active:scale-95 shadow-xl shadow-gray-200 uppercase tracking-widest">
+                  Back to Dashboard
+                </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
