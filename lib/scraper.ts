@@ -166,7 +166,10 @@ export async function fetchPlayers(
   clubId?: string
 ): Promise<Player[]> {
   const cookies = await getSessionCookies();
-  let url = `${BASE_URL}/ranking/category.aspx?id=${pubId || actualId}&category=${catId}&ps=500`;
+  let url = `${BASE_URL}/ranking/category.aspx?id=${actualId}&category=${catId}&ps=500`;
+  if (pubId) {
+    url += `&publicationid=${pubId}`;
+  }
   if (clubId) {
     url += `&C${catId}FOG_3_F2048=${clubId}`;
   }
@@ -267,7 +270,7 @@ export async function searchPlayers(query: string): Promise<SearchResult[]> {
     }
   });
 
-  // For each result, let's try to get current rankings
+  // For each result, let's try to get current rankings and club
   for (const r of results) {
     try {
       const rankUrl = `${BASE_URL}/player-profile/${r.id}/ranking`;
@@ -278,6 +281,12 @@ export async function searchPlayers(query: string): Promise<SearchResult[]> {
         }
       });
       const $rank = cheerio.load(rankRes.data);
+      
+      // Extract club from profile header
+      const clubName = $rank('.page-header__title').next('.page-header__subtitle').text().trim() 
+                    || $rank('.nav-link__subtitle').first().text().trim();
+      if (clubName) r.club = clubName;
+
       const table = $rank('table.ruler').first();
       
       const catNames = {

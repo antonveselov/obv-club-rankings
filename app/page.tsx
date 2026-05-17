@@ -101,6 +101,7 @@ export default function Home() {
   const [playerSearchQuery, setPlayerSearchQuery] = useState('');
   const [playerSearchResults, setPlayerSearchResults] = useState<SearchResult[]>([]);
   const [loadingSearch, setLoadingSearch] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -118,6 +119,36 @@ export default function Home() {
         setLoadingMetadata(false);
       });
   }, []);
+
+  // Debounced Player Search
+  useEffect(() => {
+    if (playerSearchQuery.length >= 3) {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = setTimeout(() => {
+        triggerPlayerSearch(playerSearchQuery);
+      }, 500);
+    } else {
+      setPlayerSearchResults([]);
+    }
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, [playerSearchQuery]);
+
+  const triggerPlayerSearch = async (query: string) => {
+    setLoadingSearch(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/search-player?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setPlayerSearchResults(data);
+    } catch (err: any) {
+      setError('Player Search Error: ' + err.message);
+    } finally {
+      setLoadingSearch(false);
+    }
+  };
 
   const handleSearch = async () => {
     if (!metadata || !selectedCat || !selectedClubId) return;
@@ -181,29 +212,6 @@ export default function Home() {
       setError('Failed to load Top 5: ' + err.message);
     } finally {
       setLoadingTop5(false);
-    }
-  };
-
-  const handlePlayerSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (playerSearchQuery.length < 3) return;
-    
-    setLoadingSearch(true);
-    setPlayerSearchResults([]);
-    setPlayers([]);
-    setTop5Results([]);
-    setEligibilityResults([]);
-    setError(null);
-
-    try {
-      const res = await fetch(`/api/search-player?q=${encodeURIComponent(playerSearchQuery)}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setPlayerSearchResults(data);
-    } catch (err: any) {
-      setError('Player Search Error: ' + err.message);
-    } finally {
-      setLoadingSearch(false);
     }
   };
 
@@ -351,25 +359,23 @@ export default function Home() {
     <main className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8 font-sans">
       <div className="max-w-4xl mx-auto">
         
-        {/* Global Player Search */}
+        {/* Global Player Search - Disabled for now
         <div className="mb-8 relative">
-            <form onSubmit={handlePlayerSearch} className="group relative">
+            <div className="group relative">
                 <input
                     type="text"
-                    className="w-full bg-white border-2 border-gray-100 rounded-3xl p-6 pl-14 shadow-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all font-black text-lg placeholder:text-gray-300"
-                    placeholder="Globaler Spieler-Quick-Search (z.B. Anton Veselov)..."
+                    className="w-full bg-white border-2 border-gray-100 rounded-3xl p-6 pl-14 shadow-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all font-black text-lg placeholder:text-gray-200"
+                    placeholder="Spieler suchen (mind. 3 Buchstaben)..."
                     value={playerSearchQuery}
                     onChange={(e) => setPlayerSearchQuery(e.target.value)}
                 />
                 <Search className="absolute left-6 top-1/2 -translate-y-1/2 h-6 w-6 text-gray-300 group-focus-within:text-blue-500 transition-colors" />
-                <button 
-                    type="submit"
-                    disabled={playerSearchQuery.length < 3 || loadingSearch}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 bg-gray-900 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:bg-gray-100 disabled:text-gray-300"
-                >
-                    {loadingSearch ? '...' : 'SUCHEN'}
-                </button>
-            </form>
+                {loadingSearch && (
+                  <div className="absolute right-6 top-1/2 -translate-y-1/2">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                  </div>
+                )}
+            </div>
         </div>
 
         {playerSearchResults.length > 0 && (
@@ -378,7 +384,7 @@ export default function Home() {
                 <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
                     <User className="h-4 w-4" /> Suchergebnisse
                 </h3>
-                <button onClick={() => setPlayerSearchResults([])} className="text-white/60 hover:text-white">
+                <button onClick={() => { setPlayerSearchResults([]); setPlayerSearchQuery(''); }} className="text-white/60 hover:text-white">
                     <X className="h-5 w-5" />
                 </button>
             </div>
@@ -392,7 +398,7 @@ export default function Home() {
                         <div>
                             <p className="text-xl font-black text-gray-900 group-hover:text-blue-600 transition-colors">{res.name}</p>
                             <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1 flex items-center gap-2">
-                                <Shield className="h-3 w-3" /> {res.club}
+                                <Shield className="h-3 w-3 text-blue-500" /> {res.club}
                             </p>
                         </div>
                     </div>
@@ -424,13 +430,14 @@ export default function Home() {
             </div>
           </div>
         )}
+        */}
 
         <div className="bg-white shadow-sm rounded-3xl p-6 sm:p-8 mb-8 border border-gray-200">
-          <h1 className="text-2xl font-black text-gray-900 mb-8 flex items-center gap-4 tracking-tighter">
+          <h1 className="text-2xl font-black text-gray-900 mb-8 flex items-center gap-4 tracking-tighter uppercase">
             <div className="bg-yellow-400 p-2 rounded-xl shadow-inner">
                 <Trophy className="text-white h-6 w-6" />
             </div>
-            ÖBV CLUB EXPLORER
+            Club-Statistiken
           </h1>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -540,7 +547,7 @@ export default function Home() {
                     <Medal className="text-green-600 h-6 w-6" />
                 </div>
                 <h2 className="text-xl font-black text-gray-900 uppercase tracking-tight">
-                  TURNIER-RÜCKERSTATTUNG
+                  Rückerstattung prüfen
                 </h2>
             </div>
             
@@ -556,7 +563,7 @@ export default function Home() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Anwesenheitsliste (.xlsx)</label>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Anwesenheit (.xlsx)</label>
                 <input
                   type="file"
                   accept=".xlsx, .xls"
